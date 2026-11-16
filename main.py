@@ -1,3 +1,4 @@
+import ctypes
 import os
 import sys
 
@@ -502,12 +503,39 @@ def main():
 
     open_canvas(CANVAS_W, CANVAS_H)
     import pico2d.pico2d as p2d
-    SDL_RenderSetLogicalSize(p2d.renderer, CANVAS_W, CANVAS_H)      # 전체화면에서도 800x600 비율로 늘려 그림
+    FULLSCREEN_SCALE = 1.0              # 전체화면에서 게임 그림 크기. 1.0 = 화면에 꽉 차게(가장 큼), 작을수록 작아짐 (0.6~1.0 추천)
+    view = {'s': 1.0, 'vx': 0, 'vy': 0}  # 전체화면에서 마우스 위치를 맞추기 위한 값 (배율, 가운데 맞춤 위치)
+    SDL_RenderSetLogicalSize(p2d.renderer, 0, 0)        # SDL 자동 맞춤은 쓰지 않고 아래에서 직접 계산
 
     def toggle_fullscreen():                                        # M 키로 전체화면 <-> 창 모드
         full = SDL_GetWindowFlags(p2d.window) & SDL_WINDOW_FULLSCREEN
-        r = SDL_SetWindowFullscreen(p2d.window, 0 if full else SDL_WINDOW_FULLSCREEN_DESKTOP)
-        print('[전체화면] M 키 입력, 결과 코드:', r, SDL_GetError().decode('utf8', 'ignore'))     # 안 될 때 원인 확인용
+        if full:                                                    # 창 모드로
+            SDL_SetWindowFullscreen(p2d.window, 0)
+            SDL_RenderSetScale(p2d.renderer, 1.0, 1.0)
+            SDL_RenderSetViewport(p2d.renderer, None)
+            view['s'], view['vx'], view['vy'] = 1.0, 0, 0
+        else:                                                       # 전체화면으로: 화면에 맞춘 배율에 FULLSCREEN_SCALE을 곱해 가운데에 그림
+            SDL_SetWindowFullscreen(p2d.window, SDL_WINDOW_FULLSCREEN_DESKTOP)
+            mode = SDL_DisplayMode()
+            SDL_GetDesktopDisplayMode(SDL_GetWindowDisplayIndex(p2d.window), ctypes.byref(mode))
+            sc = min(mode.w / CANVAS_W, mode.h / CANVAS_H) * FULLSCREEN_SCALE
+            vx, vy = int((mode.w / sc - CANVAS_W) / 2), int((mode.h / sc - CANVAS_H) / 2)
+            SDL_RenderSetScale(p2d.renderer, sc, sc)
+            SDL_RenderSetViewport(p2d.renderer, SDL_Rect(vx, vy, CANVAS_W, CANVAS_H))
+            view['s'], view['vx'], view['vy'] = sc, vx, vy
+
+    raw_get_events = get_events
+
+    def get_events_fs():                                            # 전체화면일 때 마우스 좌표를 800x600 기준으로 되돌림
+        evs = raw_get_events()
+        if view['s'] != 1.0:
+            for ev in evs:
+                if ev.type in (SDL_MOUSEMOTION, SDL_MOUSEBUTTONDOWN, SDL_MOUSEBUTTONUP):
+                    ev.x = int(ev.x / view['s']) - view['vx']
+                    ev.y = int(ev.y / view['s']) - view['vy']
+        return evs
+    title_mod.get_events = get_events_fs
+    globals()['get_events'] = get_events_fs
 
     title_mod.toggle_fullscreen = toggle_fullscreen                 # 타이틀 화면에서도 M 키가 되게 연결
 
