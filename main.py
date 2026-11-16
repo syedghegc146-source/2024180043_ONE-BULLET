@@ -509,6 +509,14 @@ def main():
         r = SDL_SetWindowFullscreen(p2d.window, 0 if full else SDL_WINDOW_FULLSCREEN_DESKTOP)
         print('[전체화면] M 키 입력, 결과 코드:', r, SDL_GetError().decode('utf8', 'ignore'))     # 안 될 때 원인 확인용
 
+    title_mod.toggle_fullscreen = toggle_fullscreen                 # 타이틀 화면에서도 M 키가 되게 연결
+
+    def black_clear():                                              # 전체화면 양옆 빈 곳이 흰색 대신 검은색이 되게
+        SDL_SetRenderDrawColor(p2d.renderer, 0, 0, 0, 255)
+        SDL_RenderClear(p2d.renderer)
+    title_mod.clear_canvas = black_clear
+    globals()['clear_canvas'] = black_clear
+
     hide_cursor()
 
     Sound.load()

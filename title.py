@@ -9,6 +9,8 @@ from config import *
 from litfx import make_lit
 from walkanim import prepare_walk
 
+toggle_fullscreen = lambda: None            # main.py 가 진짜 전체화면 함수로 바꿔 줌 (M 키)
+
 # =============== 타이틀 화면 설정 (이 파일에서만 바꾸세요) ===============
 TITLE_BGM_VOL = 30          # 타이틀 화면에서의 배경음악 음량 (0~128)
 TITLE_FADE_IN = 0.6         # 처음에 밝아지는 시간(초)
@@ -234,6 +236,9 @@ def run_title(default_sel=1):
                         sel = i
             elif e.type == SDL_KEYDOWN:
                 k = e.key
+                if k == SDLK_m:                      # M: 전체화면 <-> 창 모드
+                    toggle_fullscreen()
+                    continue
                 if scene == 'title':
                     if k == SDLK_ESCAPE:
                         return None
