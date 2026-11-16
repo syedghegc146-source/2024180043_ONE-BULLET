@@ -41,6 +41,7 @@ ART_DASH_FPS = 60                             # 대쉬 그림이 넘어가는 �
 
 SHADOW_AIM_N = globals().get('SHADOW_AIM_N', 3)              # 정밀 조준 탄 개수 (dg_config.py 에서 바꾸세요)
 SHADOW_AIM_SPREAD = globals().get('SHADOW_AIM_SPREAD', 0.16)  # 정밀 조준 탄 사이 각도 (dg_config.py 에서 바꾸세요)
+SHOW_AIM_LINE = False   # True 로 바꾸면 조준선이 다시 보입니다
 
 SHADOW_INTRO = 1.5          # 나타나는 시간(초)
 SHADOW_MUZZLE = 40          # 몸 중심에서 탄이 나오는 거리
@@ -596,6 +597,8 @@ class ShadowBoss:
 
     def _aim_lines(self, x, y, ang, t, dur, fan, multi=False):
         """조준선: 선이 칠해진 곳이 실제 탄이 지나가는 길. 마지막 순간에는 진하게 고정"""
+        if not SHOW_AIM_LINE:
+            return
         locked = t >= dur - SHADOW_AIM_LOCK
         k = min(1.0, t / dur)
         width = HIT_RADIUS * 2 + 4
@@ -617,7 +620,7 @@ class ShadowBoss:
         if self.state == 'aim':
             self._aim_lines(self._lx + ox, self._ly + oy, self.aim_ang, self.t, self.aim_dur, self.atk == 'fan',
                             self.atk == 'aim' and SHADOW_AIM_N > 1)
-        elif self.state == 'dash_warn':        # 대쉬 길 (보스 몸이 지나가는 범위)
+        elif self.state == 'dash_warn' and SHOW_AIM_LINE:        # 대쉬 길 (보스 몸이 지나가는 범위)
             fx, fy = self.dash_from
             ang = math.atan2(self.dash_dir[1], self.dash_dir[0])
             k = self.t / SHADOW_DASH_WARN
