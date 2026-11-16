@@ -501,6 +501,14 @@ def main():
     shadow_info = prepare_shadow()          # 10층 그림자 보스 그림 (플레이어 그림을 어둡게)
 
     open_canvas(CANVAS_W, CANVAS_H)
+    import pico2d.pico2d as p2d
+    SDL_RenderSetLogicalSize(p2d.renderer, CANVAS_W, CANVAS_H)      # 전체화면에서도 800x600 비율로 늘려 그림
+
+    def toggle_fullscreen():                                        # M 키로 전체화면 <-> 창 모드
+        full = SDL_GetWindowFlags(p2d.window) & SDL_WINDOW_FULLSCREEN
+        r = SDL_SetWindowFullscreen(p2d.window, 0 if full else SDL_WINDOW_FULLSCREEN_DESKTOP)
+        print('[전체화면] M 키 입력, 결과 코드:', r, SDL_GetError().decode('utf8', 'ignore'))     # 안 될 때 원인 확인용
+
     hide_cursor()
 
     Sound.load()
@@ -807,6 +815,8 @@ def main():
                 running = False
             elif e.type == SDL_KEYDOWN and e.key == SDLK_ESCAPE:
                 running = False
+            elif e.type == SDL_KEYDOWN and e.key == SDLK_m:
+                toggle_fullscreen()
             elif DEV_MODE and e.type == SDL_KEYDOWN and e.key in (SDLK_n, SDLK_b) and state == 'play':
                 g.trans = None
                 start_floor(max(0, min(TOTAL_FLOORS - 1, g.floor + (1 if e.key == SDLK_n else -1))))
