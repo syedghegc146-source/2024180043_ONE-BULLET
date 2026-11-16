@@ -1,0 +1,15 @@
+python/
+__pycache__/
+*.pyc
+best_time*.json
+dg_shadow_*
+dg_purple.png
+steps/
+commit_steps.py
+commit_steps2.py
+commit_steps3.py
+*book*
+commit_steps*.py
+files.txt
+game_code/
+dg_violet*
