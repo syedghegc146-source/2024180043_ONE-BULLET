@@ -115,9 +115,12 @@ def _white_to_alpha(path):
     im = np.array(Image.open(path).convert('RGB'))
     bg = _flood_bg(im)
     mn = im.min(axis=2)
-    for _ in range(2):                                    # 배경과 맞닿은 흰 테두리 지우기
-        bg = bg | (_grow(bg) & ~bg & (mn > 200))
-    return np.dstack([im, np.where(bg, 0, 255).astype(np.uint8)])
+    for thr in (215, 190, 170, 150, 135, 120):            # 배경과 맞닿은 밝은 테두리를 안쪽으로 조금씩 지움
+        bg = bg | (_grow(bg) & ~bg & (mn > thr))
+    a = np.dstack([im, np.where(bg, 0, 255).astype(np.uint8)])
+    edge = _grow(bg) & ~bg                                # 남은 가장자리 한 겹은 어둡게 (흰 선 방지)
+    a[:, :, :3][edge] = (a[:, :, :3][edge] * 0.45).astype(np.uint8)
+    return a
 
 
 def _char_frames(a):
@@ -183,7 +186,7 @@ def _aura(path, size=256):
 def prepare_darkmage():
     """암흑마법사 그림을 준비한다. 돌려주는 값: {'ok': 성공 여부}. 원본이 바뀌면 자동으로 다시 만든다"""
     srcs = [ART_SHEET, ART_FX, ART_BASE]
-    sig = ['v1']
+    sig = ['v2']
     for p in srcs:
         try:
             st = os.stat(p)
