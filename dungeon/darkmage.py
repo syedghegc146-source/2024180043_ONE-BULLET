@@ -24,19 +24,25 @@ DM_HEIGHT = 200                  # 보스 키(px). 크게 하려면 숫자를 �
 DM_INTRO = 1.8                   # 등장 연출 시간(초)
 DM_WALK = 110                    # 걷는 속도
 DM_KEEP = (250, 380)             # 플레이어와 유지하려는 거리
-DM_CD = [1.7, 1.4, 1.1]          # 단계별 공격 간격(초). 클수록 쉬움
-DM_CAST = [0.80, 0.70, 0.60]     # 단계별 시전 시간(초). 길수록 예고가 길어 쉬움
-DM_ORB_SPEED = 300               # 마법탄 속도
+DM_CD = [1.3, 1.05, 0.9]          # 단계별 공격 간격(초). 클수록 쉬움
+DM_CAST = [0.65, 0.55, 0.45]     # 단계별 시전 시간(초). 길수록 예고가 길어 쉬움
+DM_ORB_SPEED = 340               # 마법탄 속도
+DM_ORB_HIT = 13                  # 마법탄 충돌 반경(px)
 DM_ORB_SIZE = 30                 # 마법탄 그림 크기(px)
-DM_FAN_N = [5, 7, 9]             # 단계별 부채꼴 탄 개수
-DM_FAN_STEP = 0.19               # 부채꼴 탄 사이 각도(라디안)
-DM_RAIN_N = [3, 5, 7]            # 단계별 유성 개수
-DM_RAIN_WARN = [1.15, 1.0, 0.9]  # 유성 경고 시간(초). 길수록 쉬움
-DM_RAIN_R = 64                   # 유성 폭발 반경(px)
+DM_FAN_N = [7, 9, 11]             # 단계별 부채꼴 탄 개수
+DM_FAN_STEP = 0.15               # 부채꼴 탄 사이 각도(라디안)
+DM_RAIN_N = [4, 6, 8]            # 단계별 유성 개수
+DM_RAIN_WARN = [0.9, 0.8, 0.7]  # 유성 경고 시간(초). 길수록 쉬움
+DM_RAIN_R = 68                   # 유성 폭발 반경(px)
+DM_RAIN_GAP = 0.28               # 유성 간격(초)
+DM_RAIN_FOLLOW = 230             # 유성이 따라오는 속도
+DM_RAIN_TRACK = 0.6              # 유성이 플레이어를 따라오는 시간(초)
 DM_FALL_T = 0.38                 # 유성이 떨어지는 시간
 DM_BOOM_T = 0.5                  # 폭발이 지속되는 시간 (앞쪽 0.28초만 피해)
-DM_SPIRAL_T = 2.2                # 나선 탄막 지속 시간
-DM_SPIRAL_ARMS = [2, 2, 3]
+DM_SPIRAL_T = 2.6                # 나선 탄막 지속 시간
+DM_SPIRAL_ARMS = [3, 3, 4]       # 나선 탄막 개수
+DM_SPIRAL_GAP = 0.07             # 나선  간격
+DM_SPIRAL_TURN = 3.4             # 나선 회전속도 
 DM_RING_N = 18                   # 원형 탄막 탄 개수
 DM_TP_DIST = (270, 340)          # 순간이동 후 플레이어와의 거리
 
@@ -186,7 +192,7 @@ def _aura(path, size=256):
 def prepare_darkmage():
     """암흑마법사 그림을 준비한다. 돌려주는 값: {'ok': 성공 여부}. 원본이 바뀌면 자동으로 다시 만든다"""
     srcs = [ART_SHEET, ART_FX, ART_BASE]
-    sig = ['v2']
+    sig = ['v']
     for p in srcs:
         try:
             st = os.stat(p)
@@ -265,11 +271,13 @@ class _Art:
 
 
 # =============== 탄 ===============
-class DMOrb:
-    """보라 마법탄 (boss_bullets에 넣는 탄과 같은 방식: update / draw / x / y / alive)"""
 
+
+
+class DMOrb:
     def __init__(self, x, y, ang, speed, turn=0.0, homing_time=0.0):
         self.x, self.y = x, y
+        self.rx, self.ry = x, y
         self.ang = ang
         self.speed = speed
         self.turn = turn
@@ -280,31 +288,36 @@ class DMOrb:
     def update(self, dt, target=None):
         self.age += dt
         if self.turn and target is not None and self.age < self.homing_time:
-            want = math.atan2(target.y - self.y, target.x - self.x)
+            want = math.atan2(target.y - self.ry, target.x - self.rx)
             diff = (want - self.ang + math.pi) % (2 * math.pi) - math.pi
             step = self.turn * dt
             self.ang += max(-step, min(step, diff))
-        self.x += math.cos(self.ang) * self.speed * dt
-        self.y += math.sin(self.ang) * self.speed * dt
-        if not (-50 < self.x < CANVAS_W + 50 and -50 < self.y < CANVAS_H + 50):
+        self.rx += math.cos(self.ang) * self.speed * dt
+        self.ry += math.sin(self.ang) * self.speed * dt
+        self.x, self.y = self.rx, self.ry
+        if not (-50 < self.rx < CANVAS_W + 50 and -50 < self.ry < CANVAS_H + 50):
             self.alive = False
+            return
+        if target is not None:
+            hx, hy = target.x, target.y - target.base_h * HIT_OFFSET
+            if math.hypot(self.rx - hx, self.ry - hy) < DM_ORB_HIT:
+                self.x, self.y = hx, hy
 
     def draw(self, imgs=None, metas=None):
         _Art.load()
         pulse = 1 + 0.12 * math.sin(self.age * 18)
         s = DM_ORB_SIZE
         _Art.orb.opacify(0.45)
-        _Art.orb.draw(self.x, self.y, s * 2.0 * pulse, s * 2.0 * pulse)
+        _Art.orb.draw(self.rx, self.ry, s * 2.0 * pulse, s * 2.0 * pulse)
         _Art.orb.opacify(1.0)
-        _Art.orb.draw(self.x, self.y, s, s)
-
-
+        _Art.orb.draw(self.rx, self.ry, s, s)
 class DMMeteor:
     """유성: 바닥에 마법진(경고) -> 위에서 낙하 -> 폭발(잠깐만 피해) -> 잔상.
     피해를 주는 순간에만 x, y를 플레이어 위치로 옮겨서 main의 피격 판정에 걸리게 한다"""
 
-    def __init__(self, tx, ty, warn, delay=0.0):
+    def __init__(self, tx, ty, warn, delay=0.0, ox=0.0, oy=0.0):
         self.tx, self.ty = tx, ty
+        self.ox, self.oy = ox, oy
         self.warn = warn
         self.delay = delay
         self.t = -delay
@@ -315,6 +328,13 @@ class DMMeteor:
     def update(self, dt, target=None):
         self.t += dt
         self.x = self.y = -9999.0
+        if target is not None and 0 <= self.t < self.warn * DM_RAIN_TRACK:      # 경고 초반에는 플레이어를 따라감
+            fx_, fy_ = clamp_arena(target.x + self.ox, target.y - target.base_h * HIT_OFFSET + self.oy, 40)
+            d = math.hypot(fx_ - self.tx, fy_ - self.ty)
+            if d > 1:
+                k = min(d, DM_RAIN_FOLLOW * dt) / d
+                self.tx += (fx_ - self.tx) * k
+                self.ty += (fy_ - self.ty) * k
         end = self.warn + DM_FALL_T + DM_BOOM_T + 0.5
         if self.t >= end:
             self.alive = False
@@ -350,7 +370,6 @@ class DMMeteor:
             else:
                 a = (b - DM_BOOM_T) / 0.5
                 _Art.fx_draw('after', min(3, int(a * 4)), self.tx, self.ty - 0.4 * R, 2.4 * R / 170.0, 'bottom', 1 - a)
-
 
 # =============== 보스 ===============
 def _seg_free(x, y):
@@ -429,9 +448,9 @@ class DarkMage:
     # ---------- 공격 고르기 ----------
     def _attack(self):
         ph = self.phase
-        pool = {0: [('orb', 2), ('rain', 1)],
-                1: [('orb', 2), ('rain', 2), ('teleport', 1), ('spiral', 1)],
-                2: [('orb', 1), ('rain', 2), ('teleport', 2), ('spiral', 1), ('ring', 1)]}[ph]
+        pool = {0: [('orb', 2), ('rain', 2)],
+                1: [('orb', 1), ('rain', 3), ('teleport', 1), ('spiral', 2)],
+                2: [('orb', 1), ('rain', 3), ('teleport', 2), ('spiral', 2), ('ring', 1)]}[ph]
         allk = [k for k, w in pool for _ in range(w)]
         k = random.choice([x for x in allk if x != self.last] or allk)
         self.last = k
@@ -480,18 +499,18 @@ class DarkMage:
         p, ph = self.player, self.phase
         n = DM_RAIN_N[ph]
         hx, hy = self._hit_center()
-        pos = [(hx + p.x * 0.0, hy)]                           # 첫 유성은 플레이어 발밑
+        offs = [(0.0, 0.0)]                                    # 첫 유성은 플레이어 발밑
         tries = 0
-        while len(pos) < n and tries < 200:
+        while len(offs) < n and tries < 300:
             tries += 1
             a = random.uniform(0, 2 * math.pi)
-            r = random.uniform(80, 280)
-            cx, cy = hx + math.cos(a) * r, hy + math.sin(a) * r
-            cx, cy = clamp_arena(cx, cy, 40)
-            if all(math.hypot(cx - qx, cy - qy) > DM_RAIN_R * 1.7 for qx, qy in pos):
-                pos.append((cx, cy))
-        for i, (cx, cy) in enumerate(pos):
-            self.bb.append(DMMeteor(cx, cy, DM_RAIN_WARN[ph], delay=i * 0.22))
+            r = random.uniform(DM_RAIN_R * 2.2, 260)
+            o = (math.cos(a) * r, math.sin(a) * r)
+            cx, cy = clamp_arena(hx + o[0], hy + o[1], 40)
+            if all(math.hypot(o[0] - q[0], o[1] - q[1]) > DM_RAIN_R * 2.4 for q in offs):
+                offs.append((cx - hx, cy - hy))
+        for i, (ox, oy) in enumerate(offs):
+            self.bb.append(DMMeteor(hx + ox, hy + oy, DM_RAIN_WARN[ph], delay=i * DM_RAIN_GAP, ox=ox, oy=oy))
         Sound.play('warning')
 
     # ---------- 갱신 ----------
@@ -541,10 +560,12 @@ class DarkMage:
                 self._to('recover')
         elif st == 'spiral':
             arms = DM_SPIRAL_ARMS[self.phase]
-            self.spiral_a += dt * 4.2
+            dirn = -1 if (self.phase >= 1 and self.t > DM_SPIRAL_T / 2) else 1
+            self.spiral_a += dt * DM_SPIRAL_TURN * dirn
             self.spiral_acc += dt
-            while self.spiral_acc >= 0.09:
-                self.spiral_acc -= 0.09
+            while self.spiral_acc >= DM_SPIRAL_GAP:
+                self.spiral_acc -= DM_SPIRAL_GAP
+
                 for k in range(arms):
                     self._orb(self.x, self.y + 10, self.spiral_a + k * 2 * math.pi / arms, speed=235)
             if self.t >= DM_SPIRAL_T:
