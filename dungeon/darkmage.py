@@ -27,7 +27,8 @@ DM_KEEP = (250, 380)             # 플레이어와 유지하려는 거리
 DM_CD = [1.3, 1.05, 0.9] 
 DM_CAST = [0.65, 0.55, 0.45]     # 단계별 시전 시간(초). 길수록 예고가 길어 쉬움
 DM_ORB_SPEED = 340               # 마법탄 속도
-DM_ORB_SIZE = 30                 # 마법탄 그림 크기(px)
+DM_ORB_SIZE = 25                 # 마법탄 그림 크기(px)
+DM_ORB_BURST_T = 0.3             # 마법탄이 벽에 닿아 터지는 시간(초)
 DM_ORB_HIT = 13                  # 마법탄 피격 반경(px). 클수록 어려움 (기본 판정은 10)
 DM_FAN_N = [7, 9, 11]             # 단계별 부채꼴 탄 개수
 DM_FAN_STEP = 0.15               # 부채꼴 탄 사이 각도(라디안)
@@ -67,6 +68,7 @@ ART_SHEET = DP('darkmage_sheet.png')
 ART_FX = DP('darkmage_fx.png')
 ART_BASE = DP('darkmage_base.png')
 ART_GHOST = DP('darkmage_ghost.png')      # 그림자 그림 시트 (없으면 그림자 공격을 안 씀)
+ART_ORB = DP('darkmage_orb.png')          # 마법탄 그림 시트 (없으면 코드로 만든 빛덩이를 씀)
 OUT_SHEET = OUT('dg_dm_sheet.png')
 OUT_HURT = OUT('dg_dm_sheet_hurt.png')
 OUT_FX = OUT('dg_dm_fx.png')
@@ -268,6 +270,7 @@ class _Art:
         idle = cls.frames['idle'][0]
         cls.scale = DM_HEIGHT / idle[3]                   # 시트 그림 -> 화면 크기
         cls.ghost = load_image(ART_GHOST) if os.path.exists(ART_GHOST) else None
+        cls.orbs = load_image(ART_ORB) if os.path.exists(ART_ORB) else None
         cls.loaded = True
 
     @classmethod
@@ -295,9 +298,16 @@ class DMOrb:
         self.homing_time = homing_time
         self.alive = True
         self.age = 0.0
+        self.burst = -1.0                                     # 0 이상이면 벽에 닿아 터지는 중
 
     def update(self, dt, target=None):
         self.age += dt
+        if self.burst >= 0:
+            self.burst += dt
+            self.x = self.y = -9999.0                         # 터지는 동안은 피해 없음
+            if self.burst >= DM_ORB_BURST_T:
+                self.alive = False
+            return
         if self.turn and target is not None and self.age < self.homing_time:
             want = math.atan2(target.y - self.ry, target.x - self.rx)
             diff = (want - self.ang + math.pi) % (2 * math.pi) - math.pi
@@ -309,6 +319,10 @@ class DMOrb:
         if not (-50 < self.rx < CANVAS_W + 50 and -50 < self.ry < CANVAS_H + 50):
             self.alive = False
             return
+        if _Art.orbs is not None and self.age > 0.3 and arena_d(self.rx, self.ry) >= 1.0:     # 아레나 벽에 닿으면 터짐
+            self.burst = 0.0
+            self.x = self.y = -9999.0
+            return
         if target is not None:
             hx, hy = target.x, target.y - target.base_h * HIT_OFFSET
             if math.hypot(self.rx - hx, self.ry - hy) < DM_ORB_HIT:
@@ -318,6 +332,18 @@ class DMOrb:
         _Art.load()
         pulse = 1 + 0.12 * math.sin(self.age * 18)
         s = DM_ORB_SIZE
+        o = _Art.orbs
+        if o is not None:                                     # 그림 시트: 윗줄 6칸 = 날아가는 탄, 아랫줄 = 터짐
+            cw, ch, k = o.w // 6, o.h // 2, DM_ORB_SIZE / 53.0
+            if self.burst >= 0:
+                row, i = 1, 1 + min(4, int(self.burst / DM_ORB_BURST_T * 5))
+            else:
+                row, i = 0, int(self.age * 14) % 6
+                _Art.orb.opacify(0.3)                         # 은은한 바깥 빛
+                _Art.orb.draw(self.rx, self.ry, s * 2.2, s * 2.2)
+                _Art.orb.opacify(1.0)
+            o.clip_composite_draw(i * cw, o.h - (row + 1) * ch, cw, ch, 0, '', self.rx, self.ry, cw * k, ch * k)
+            return
         _Art.orb.opacify(0.45)
         _Art.orb.draw(self.rx, self.ry, s * 2.0 * pulse, s * 2.0 * pulse)
         _Art.orb.opacify(1.0)
