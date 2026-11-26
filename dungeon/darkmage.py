@@ -33,12 +33,24 @@ DM_FAN_N = [7, 9, 11]             # 단계별 부채꼴 탄 개수
 DM_FAN_STEP = 0.15               # 부채꼴 탄 사이 각도(라디안)
 DM_RAIN_N = [4, 6, 8]            # 단계별 유성 개수
 DM_RAIN_WARN = [0.9, 0.8, 0.7]  # 유성 경고 시간(초). 길수록 쉬움
-DM_RAIN_R = 68                   # 유성 폭발 반경(px)
+DM_RAIN_R = 68                   # 유성 폭발 반경(px)  
 DM_RAIN_GAP = 0.28               # 유성 간격(초)
 DM_RAIN_FOLLOW = 230             # 유성이 따라오는 속도
-DM_RAIN_TRACK = 0.6              # 유성이 플레이어를 따라오는 시간(초)
+DM_RAIN_TRACK = 0.6              # 유성이 플레이어를 따라오는 시간(초
 DM_FALL_T = 0.38                 # 유성이 떨어지는 시간
 DM_BOOM_T = 0.5                  # 폭발이 지속되는 시간 (앞쪽 0.28초만 피해)
+DM_LASER_WARN = [1.0, 1.0, 0.85]   # 레이저 경고 시간(초). 길수록 쉬움 (1단계에서는 쓰지 않음)
+DM_LASER_FIRE = 0.55             # 레이저가 켜져 있는 시간(초)
+DM_LASER_LEN = 1100              # 레이저 길이(px)
+DM_LASER_W = 120                 # 레이저 그림 굵기(px)
+DM_LASER_HIT = 22                # 레이저 피격 반경(px). 클수록 어려움
+DM_LASER_TRACK = 0.55            # 경고 시간의 앞쪽 몇 %까지 플레이어를 따라 도는지 (그 뒤엔 고정)
+DM_LASER_ROT = 0.3               # 발사 중 레이저가 도는 속도(라디안/초)
+DM_GHOST_N = [0, 3, 5]           # 단계별 그림자 수
+DM_GHOST_SPEED = [0, 85, 105]    # 그림자 속도(px/초). 플레이어(250)보다 훨씬 느림
+DM_GHOST_LIFE = 5.5              # 그림자가 남아 있는 시간(초)
+DM_GHOST_HIT = 20                # 그림자 피격 반경(px)
+DM_GHOST_SIZE = 66               # 그림자 그림 높이(px)
 DM_SPIRAL_T = 2.6                # 나선 탄막 지속 시간
 DM_SPIRAL_ARMS = [3, 3, 4]       # 나선 탄막 개수
 DM_SPIRAL_GAP = 0.07             # 나선  간격
@@ -57,6 +69,8 @@ FX_QUADS = {'warn': (0, 0, 780, 520), 'meteor': (780, 0, 1536, 520),
 ART_SHEET = DP('darkmage_sheet.png')
 ART_FX = DP('darkmage_fx.png')
 ART_BASE = DP('darkmage_base.png')
+ART_FX2 = DP('darkmage_fx2.png')          
+ART_GHOST = DP('darkmage_ghost.png')      
 OUT_SHEET = OUT('dg_dm_sheet.png')
 OUT_HURT = OUT('dg_dm_sheet_hurt.png')
 OUT_FX = OUT('dg_dm_fx.png')
@@ -257,8 +271,9 @@ class _Art:
         cls.bar_bg, cls.bar_fg = load_image(BAR_BG), load_image(BAR_FG)
         idle = cls.frames['idle'][0]
         cls.scale = DM_HEIGHT / idle[3]                   # 시트 그림 -> 화면 크기
+        cls.fx2 = load_image(ART_FX2) if os.path.exists(ART_FX2) else None
+        cls.ghost = load_image(ART_GHOST) if os.path.exists(ART_GHOST) else None
         cls.loaded = True
-
     @classmethod
     def fx_draw(cls, row, i, x, y, k, anchor='bottom', alpha=1.0):
         """이펙트 그림 한 장. anchor: 'bottom'이면 (x, y)가 그림 아래 가운데, 'center'면 가운데"""
@@ -370,7 +385,119 @@ class DMMeteor:
             else:
                 a = (b - DM_BOOM_T) / 0.5
                 _Art.fx_draw('after', min(3, int(a * 4)), self.tx, self.ty - 0.4 * R, 2.4 * R / 170.0, 'bottom', 1 - a)
+class DMLaser:
+    """레이저: 가는 경고선(플레이어를 따라 돔) -> 고정 -> 발사(잠깐만 피해) -> 사라짐.
+    피해 순간에만 x, y를 플레이어 위치로 옮겨서 main의 피격 판정에 걸리게 한다"""
+    ROWS = {'warn': (0, 44), 'mid': (44, 96), 'thick': (140, 150)}      # 이미지 안의 (시작 y, 높이)
 
+    def __init__(self, ox, oy, ang, warn, off=0.0, rot=0.0):
+        self.ox, self.oy = ox, oy
+        self.ang = ang + off
+        self.off = off
+        self.rot = rot
+        self.warn = warn
+        self.t = 0.0
+        self.x = self.y = -9999.0
+        self.alive = True
+        self.sound = False
+
+    def update(self, dt, target=None):
+        self.t += dt
+        self.x = self.y = -9999.0
+        W = self.warn
+        hx = hy = None
+        if target is not None:
+            hx, hy = target.x, target.y - target.base_h * HIT_OFFSET
+        if hx is not None and self.t < W * DM_LASER_TRACK:             # 경고 초반에는 플레이어를 향해 돎
+            want = math.atan2(hy - self.oy, hx - self.ox) + self.off
+            diff = (want - self.ang + math.pi) % (2 * math.pi) - math.pi
+            step = 2.4 * dt
+            self.ang += max(-step, min(step, diff))
+        if self.t >= W:
+            self.ang += self.rot * dt
+        if self.t >= W + DM_LASER_FIRE + 0.25:
+            self.alive = False
+            return
+        if hx is not None and W <= self.t < W + DM_LASER_FIRE:
+            if not self.sound:
+                self.sound = True
+                Sound.play('laser' if 'laser' in Sound.sfx else 'explode')   # 5층 보스와 같은 소리
+            dx, dy = hx - self.ox, hy - self.oy
+            c, s = math.cos(self.ang), math.sin(self.ang)
+            along = dx * c + dy * s
+            perp = -dx * s + dy * c
+            if 0 <= along <= DM_LASER_LEN and abs(perp) < DM_LASER_HIT:
+                self.x, self.y = hx, hy
+
+    def _beam(self, row, dh, alpha):
+        y0, h = DMLaser.ROWS[row]
+        img = _Art.fx2
+        cx = self.ox + math.cos(self.ang) * DM_LASER_LEN / 2
+        cy = self.oy + math.sin(self.ang) * DM_LASER_LEN / 2
+        img.opacify(max(0.0, min(1.0, alpha)))
+        img.clip_composite_draw(0, img.h - y0 - h, img.w, h, self.ang, '', cx, cy, DM_LASER_LEN, dh)
+        img.opacify(1.0)
+
+    def draw(self, imgs=None, metas=None):
+        _Art.load()
+        if _Art.fx2 is None:
+            return
+        t, W = self.t, self.warn
+        if t < W:
+            return                                                   # 경고선 없음 (기 모으는 동안은 아무것도 안 그림)
+        elif t < W + DM_LASER_FIRE:
+            flick = 1.0 + 0.06 * math.sin(t * 60)
+            self._beam('thick', DM_LASER_W * flick, 1.0)
+        else:
+            a = 1 - (t - W - DM_LASER_FIRE) / 0.25
+            self._beam('thick', DM_LASER_W * max(0.2, a), a)
+
+
+class DMGhost:
+    """그림자: 나타난 뒤 플레이어를 천천히 따라오다 사라짐. 닿으면 피해"""
+
+    def __init__(self, x, y, speed, delay=0.0):
+        self.rx, self.ry = x, y
+        self.speed = speed
+        self.t = -delay
+        self.x = self.y = -9999.0
+        self.alive = True
+        self.flip = False
+
+    def update(self, dt, target=None):
+        self.t += dt
+        self.x = self.y = -9999.0
+        if self.t < 0:
+            return
+        if self.t >= DM_GHOST_LIFE:
+            self.alive = False
+            return
+        if target is None:
+            return
+        hx, hy = target.x, target.y - target.base_h * HIT_OFFSET
+        if self.t > 0.6:                                              # 나타나는 동안은 가만히 있음
+            d = math.hypot(hx - self.rx, hy - self.ry)
+            if d > 1:
+                k = min(d, self.speed * dt) / d
+                self.rx += (hx - self.rx) * k
+                self.ry += (hy - self.ry) * k
+                self.rx, self.ry = clamp_arena(self.rx, self.ry, 20)
+            self.flip = hx < self.rx
+            if d < DM_GHOST_HIT:
+                self.x, self.y = hx, hy
+
+    def draw(self, imgs=None, metas=None):
+        _Art.load()
+        g = _Art.ghost
+        if g is None or self.t < 0:
+            return
+        a = min(1.0, self.t / 0.6) * min(1.0, (DM_GHOST_LIFE - self.t) / 0.6)
+        h = DM_GHOST_SIZE * (0.6 + 0.4 * min(1.0, self.t / 0.6))
+        w = h * g.w / g.h
+        bob = math.sin(self.t * 5) * 4
+        g.opacify(max(0.0, min(1.0, a)))
+        g.clip_composite_draw(0, 0, g.w, g.h, 0, 'h' if self.flip else '', self.rx, self.ry + bob, w, h)
+        g.opacify(1.0)
 # =============== 보스 ===============
 def _seg_free(x, y):
     return arena_d(x, y) < 0.86 and SHADOW_MIN_Y <= y <= SHADOW_MAX_Y
@@ -383,7 +510,7 @@ class DarkMage:
         self.cd_mult = diff['cd']
         self.spd_mult = diff['speed']
         self.H = DM_HEIGHT
-        self.radius = 44.0
+        self.radius = 62.0
         self.x, self.y = CANVAS_W / 2, SHADOW_MAX_Y - 30
         self._lx, self._ly = self.x, self.y
         self.hp = self.max_hp
@@ -450,14 +577,22 @@ class DarkMage:
         ph = self.phase
         pool = {0: [('orb', 2), ('rain', 2)],
                 1: [('orb', 1), ('rain', 3), ('teleport', 1), ('spiral', 2)],
-                2: [('orb', 1), ('rain', 3), ('teleport', 2), ('spiral', 2), ('ring', 1)]}[ph]
+               2: [('orb', 1), ('rain', 3), ('teleport', 2), ('spiral', 2), ('ring', 1)]}[ph]
+        if ph >= 1 and _Art.fx2 is not None:
+            pool = pool + [('laser', 2 + ph)]                  # 레이저: 2단계부터
+        if ph >= 1 and _Art.ghost is not None:
+            pool = pool + [('shadow', 1 + ph)]                 # 그림자: 2단계부터
         allk = [k for k, w in pool for _ in range(w)]
         k = random.choice([x for x in allk if x != self.last] or allk)
         self.last = k
         self.atk = k
         self.flip = self.player.x < self.x
-        if k == 'rain':
+        if k == 'rain' or k == 'shadow':
             self._to('summon')
+        elif k == 'laser':
+            self._to('laser')
+            Sound.play('laser_charge' if 'laser_charge' in Sound.sfx else 'warning')   # 5층 보스와 같은 소리
+            self._laser()
         elif k == 'teleport':
             self._to('vanish')
             Sound.play('warning')
@@ -495,7 +630,28 @@ class DarkMage:
             Sound.play('shot')
             self._to('recover')
 
+    def _laser(self):
+        ph = self.phase
+        hx, hy = self._hand()
+        px, py = self._hit_center()
+        ang = math.atan2(py - hy, px - hx)                     # 플레이어 쪽으로 한 줄
+        rot = random.choice((-1, 1)) * DM_LASER_ROT * (1.0 if ph == 1 else 1.4)
+        self.bb.append(DMLaser(hx, hy, ang, DM_LASER_WARN[ph], 0.0, rot))
+
+    def _shadows(self):
+        ph = self.phase
+        n = DM_GHOST_N[ph]
+        for i in range(n):
+            a = 2 * math.pi * (i + random.random() * 0.5) / n
+            r = random.uniform(70, 130)
+            cx, cy = clamp_arena(self.x + math.cos(a) * r, self.y + math.sin(a) * r, 30)
+            self.bb.append(DMGhost(cx, cy, DM_GHOST_SPEED[ph], delay=i * 0.15))
+        Sound.play('warning')
+
     def _summon(self):
+        if self.atk == 'shadow':
+            self._shadows()
+            return
         p, ph = self.player, self.phase
         n = DM_RAIN_N[ph]
         hx, hy = self._hit_center()
@@ -557,6 +713,12 @@ class DarkMage:
                 self.fired = True
                 self._summon()
             if self.t >= 0.8:
+                self._to('recover')
+        elif st == 'laser':
+            self.vel = (self.vel[0] * 0.8, self.vel[1] * 0.8)
+            if self.t < DM_LASER_WARN[self.phase] * DM_LASER_TRACK:
+                self.flip = player.x < self.x
+            if self.t >= DM_LASER_WARN[self.phase] + DM_LASER_FIRE + 0.3:
                 self._to('recover')
         elif st == 'spiral':
             arms = DM_SPIRAL_ARMS[self.phase]
@@ -679,12 +841,12 @@ class DarkMage:
         if self.dying:
             n = len(F['die'])
             return 'die', min(n - 1, int(self.die_t / (DEATH_TIME * 0.85) * n)), False
-        if st in ('cast', 'summon', 'spiral') or (st == 'appear' and self.atk == 'burst'):
-            if st == 'summon':                                # 손을 높이 듦
+        if st in ('cast', 'summon', 'spiral', 'laser') or (st == 'appear' and self.atk == 'burst'):
+            if st == 'summon':                                 # 손을 높이 듦
                 return 'recover', 0 if self.t < 0.4 else 1, False
             n = len(F['cast'])
             dur = DM_CAST[self.phase]
-            if st == 'spiral':
+            if st == 'spiral' or st == 'laser':
                 return 'cast', n - 1 - int(self.t * 8) % 2, True
             return 'cast', min(n - 1, int(self.t / dur * n)), True
         if st == 'recover':
