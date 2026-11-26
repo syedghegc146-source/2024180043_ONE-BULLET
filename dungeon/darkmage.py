@@ -590,6 +590,7 @@ class DarkMage:
         self.flip = self.player.x < self.x
         if k == 'rain' or k == 'shadow':
             self._to('summon')
+            Sound.play('magic')
         elif k == 'teleport':
             self._to('vanish')
             Sound.play('warning')

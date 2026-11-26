@@ -9,7 +9,6 @@ import time
 
 from config import *
 from player import Bullet
-from litfx import make_lit
 from boss import label_components, make_orb
 from dg_config import *
 
@@ -21,6 +20,15 @@ ENEMY_SRC = {'slime': DP('slime.png'), 'gunner': DP('gunner.png'),
              'shielder': DP('shielder.png'), 'shielder_block': DP('shielder_block.png'),
              'spider': DP('spider.png'), 'thief': DP('thief.png'),
              'bomber': DP('bomber.png'), 'bomber_alert': DP('bomber_alert.png')}
+# 사수 시트: 가로 6칸 x 세로 3줄 (1줄 걷기 / 2줄 조준 / 3줄 발사). 파일이 없으면 예전 그림을 그대로 씀
+GUNNER_SHEET = DP('gunner_sheet.png')
+GUNNER_SHEET_WHITE = OUT('dg_gunner_sheet_white.png')
+GS_COLS, GS_ROWS = 6, 3
+GS_CELL_W, GS_CELL_H = 300, 250      # 한 칸의 크기(px)
+GS_CHAR_H = 212                      # 한 칸 안에서 캐릭터 키 (이 높이가 화면의 ENEMY_H가 됨)
+GS_FOOT_Y = 240                      # 칸 위에서부터 발바닥까지 (px)
+GS_ANCHOR_X = 135                    # 칸 왼쪽에서부터 몸 중심까지 (px)
+GS_WALK_FPS = 9                      # 걷는 그림이 넘어가는 속도 (초당 칸 수)
 ENEMY_OUT = {k: OUT('dg_%s.png' % k) for k in ENEMY_SRC}
 ENEMY_WHITE = {k: OUT('dg_%s_white.png' % k) for k in ENEMY_SRC}     # 하얗게 번쩍일 때 쓰는 그림
 
@@ -133,6 +141,8 @@ def prepare_enemy_images():
         sizes[k] = res
         if not fresh(ENEMY_OUT[k], ENEMY_WHITE[k]):
             make_white(ENEMY_OUT[k], ENEMY_WHITE[k])
+    if os.path.exists(GUNNER_SHEET) and not fresh(GUNNER_SHEET, GUNNER_SHEET_WHITE):
+        make_white(GUNNER_SHEET, GUNNER_SHEET_WHITE)
     return sizes
 
 
@@ -256,13 +266,18 @@ def prepare_fx():
 
 def load_assets(sizes):
     """창을 연 다음에 호출. 몬스터들이 같이 쓰는 이미지 묶음"""
-    imgs = {k: load_image(make_lit(ENEMY_OUT[k])) for k in ENEMY_OUT}
+    imgs = {k: load_image(ENEMY_OUT[k]) for k in ENEMY_OUT}
     for k in ENEMY_OUT:
         imgs[k + '_white'] = load_image(ENEMY_WHITE[k])
     sz = dict(sizes)
     for k in list(sizes):
         sz[k + '_white'] = sizes[k]
     A = SimpleNamespace(sizes=sz, imgs=imgs)
+    A.gsheet = A.gsheet_white = None
+    if os.path.exists(GUNNER_SHEET) and os.path.exists(GUNNER_SHEET_WHITE):
+        A.gsheet = load_image(GUNNER_SHEET)
+        A.gsheet_white = load_image(GUNNER_SHEET_WHITE)
+        A.gsheet_h = GS_CELL_H * GS_ROWS
     A.red = load_image(OUT('dg_red.png'))
     A.black = load_image(OUT('dg_black.png'))
     A.violet = load_image(OUT('dg_violet.png'))
@@ -566,12 +581,37 @@ class Gunner(Enemy):
         self.aim = 0.0
         self.face = -1
         self.turn_t = 0.0
+        self.cell = (0, 0)                # 지금 그릴 시트 칸 (줄, 칸)
+
+    def sheet(self):
+        return self.A.gsheet is not None
 
     def flip(self):
+        if self.sheet():                  # 시트 그림은 오른쪽을 보고 있음
+            return 'h' if self.face == -1 else ''
         return 'h' if (self.face == 1) == FACES_LEFT['gunner'] else ''
 
     def muzzle(self):
+        if self.sheet():
+            return self.x + self.face * self.dh * 0.5, self.y - self.dh * 0.17
         return self.x + self.face * self.dw * 0.46, self.y - self.dh * 0.16
+
+    def draw_sprite(self, key, ox, oy, sx=1.0, sy=1.0, alpha=1.0, flip=None, dx=0.0, dy=0.0, at=None, rot=0.0):
+        """시트가 있으면 self.cell 칸을 그리고, 없으면 예전 그림. 찌그러져도 발 위치는 그대로"""
+        if not self.sheet():
+            return super().draw_sprite(key, ox, oy, sx, sy, alpha, flip, dx, dy, at, rot)
+        A = self.A
+        img = A.gsheet_white if key.endswith('_white') else A.gsheet
+        kx = self.dh * sx / GS_CHAR_H
+        ky = self.dh * sy / GS_CHAR_H
+        f = self.flip() if flip is None else flip
+        x, y = (self.x, self.y) if at is None else at
+        row, col = self.cell
+        cx = x + ox + dx + (GS_CELL_W / 2 - GS_ANCHOR_X) * kx * (-1 if f == 'h' else 1)
+        cy = y + oy + dy - self.dh / 2 + (GS_CELL_H / 2 - (GS_CELL_H - GS_FOOT_Y)) * ky
+        img.opacify(max(0.0, min(1.0, alpha)))
+        img.clip_composite_draw(col * GS_CELL_W, A.gsheet_h - (row + 1) * GS_CELL_H, GS_CELL_W, GS_CELL_H,
+                                rot, f, cx, cy, GS_CELL_W * kx, GS_CELL_H * ky)
 
     def update(self, dt, ctx):
         if self.step_dying(dt):
@@ -644,7 +684,18 @@ class Gunner(Enemy):
             return
         sx = sy = 1.0
         dx = lift = rot = 0.0
-        if self.state == 'aim':
+        if self.sheet():                                     # 시트: 걷기 / 조준 / 발사 줄에서 칸을 고름
+            if self.state == 'aim':
+                k = min(0.999, self.t / GUNNER_AIM)
+                self.cell = (1, int(k * GS_COLS))
+                if self.t >= GUNNER_AIM - GUNNER_AIM_LOCK:
+                    dx = random.uniform(-1.5, 1.5)
+            elif self.state == 'recoil':
+                k = min(0.999, self.t / GUNNER_RECOIL)
+                self.cell = (2, int(k * GS_COLS))
+            else:
+                self.cell = (0, int(self.age * GS_WALK_FPS * self.rate) % GS_COLS)
+        elif self.state == 'aim':
             k = min(1.0, self.t / GUNNER_AIM)
             sy = 1 + 0.03 * math.sin(self.age * 14)
             rot = -self.face * 0.05 * k * (1 if FACES_LEFT['gunner'] else -1)    # 반동을 받으려고 살짝 뒤로 젖힘
