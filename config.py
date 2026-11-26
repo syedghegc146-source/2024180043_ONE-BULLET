@@ -179,12 +179,14 @@ SFX_FILES = {
     'step': P('step.wav'),                # 플레이어 발소리
     'boss_enter': P('boss_enter.wav'),    # 보스방 입장
     'slam': P('slam.wav'),                # 보스 돌진이 끝나고 부딪히는 소리 (선택)
+    'magic': P('magic.wav'),              # 보스 마법 시전 직전 소리
+    'meteor': P('meteor.wav'),            # 유성 낙하 소리
 }
 
 SFX_VOL = {                            # 소리별 음량 (0~128)
     'shot': 50, 'reload': 20, 'hit': 80, 'player_hit': 90, 'dash': 128,
     'gameover': 100, 'clear': 100, 'phase': 50, 'warning': 90, 'laser': 100, 'explode': 100,
-    'block': 85, 'door': 95, 'slime_attack': 75, 'step': 128,  'boss_enter': 50, 'slam': 110, 'laser_charge': 100
+    'block': 85, 'door': 95, 'slime_attack': 75, 'step': 128,  'boss_enter': 50, 'slam': 110, 'laser_charge': 100, 'magic': 60, 'meteor': 100
 }
 BGM_FILES = [P('bgm.mp3'), P('bgm.ogg'), P('bgm.wav')]   # 먼저 읽히는 파일을 사용
 BGM_VOL = 45                                              # 배경음악 음량 (0~128)

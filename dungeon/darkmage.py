@@ -382,7 +382,7 @@ class DMMeteor:
         if 0 <= boom_t < 0.28 and target is not None:
             if not self.sound:
                 self.sound = True
-                Sound.play('explode')
+                Sound.play('meteor')
             hx, hy = target.x, target.y - target.base_h * HIT_OFFSET
             if math.hypot(hx - self.tx, hy - self.ty) < DM_RAIN_R:
                 self.x, self.y = hx, hy
@@ -595,7 +595,7 @@ class DarkMage:
             Sound.play('warning')
         else:
             self._to('cast')
-            Sound.play('warning')
+            Sound.play('magic')
 
     def _fire_cast(self):
         ph = self.phase
@@ -665,7 +665,6 @@ class DarkMage:
         if self.alive and self.phase != self.prev_phase:       # 단계가 바뀌면 탄을 지우고 잠깐 쉼
             self.prev_phase = self.phase
             self.phase_event = self.phase
-            Sound.play('phase')
             self.bb.clear()
             self.vel = (0.0, 0.0)
             self.alpha = 1.0
