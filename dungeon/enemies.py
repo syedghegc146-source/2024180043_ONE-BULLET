@@ -20,15 +20,21 @@ ENEMY_SRC = {'slime': DP('slime.png'), 'gunner': DP('gunner.png'),
              'shielder': DP('shielder.png'), 'shielder_block': DP('shielder_block.png'),
              'spider': DP('spider.png'), 'thief': DP('thief.png'),
              'bomber': DP('bomber.png'), 'bomber_alert': DP('bomber_alert.png')}
-# 사수 시트: 가로 6칸 x 세로 3줄 (1줄 걷기 / 2줄 조준 / 3줄 발사). 파일이 없으면 예전 그림을 그대로 씀
-GUNNER_SHEET = DP('gunner_sheet.png')
-GUNNER_SHEET_WHITE = OUT('dg_gunner_sheet_white.png')
-GS_COLS, GS_ROWS = 6, 3
-GS_CELL_W, GS_CELL_H = 300, 250      # 한 칸의 크기(px)
-GS_CHAR_H = 212                      # 한 칸 안에서 캐릭터 키 (이 높이가 화면의 ENEMY_H가 됨)
-GS_FOOT_Y = 240                      # 칸 위에서부터 발바닥까지 (px)
-GS_ANCHOR_X = 135                    # 칸 왼쪽에서부터 몸 중심까지 (px)
-GS_WALK_FPS = 9                      # 걷는 그림이 넘어가는 속도 (초당 칸 수)
+# 몬스터 시트: 가로 6칸, 줄마다 동작이 다름. 시트 파일이 없으면 예전 그림을 그대로 씀
+#   cell = 한 칸 크기(px), char_h = 칸 안에서 캐릭터 키(이 높이가 화면의 ENEMY_H가 됨),
+#   foot_y = 칸 위에서 발바닥까지, anchor_x = 칸 왼쪽에서 몸 중심까지
+SHEET_SPECS = {
+    # 사수: 1줄 걷기 / 2줄 조준 / 3줄 발사
+    'gunner': dict(file='gunner_sheet.png', cell=(300, 250), rows=3, char_h=212, foot_y=240, anchor_x=135),
+    # 방패병: 1줄 걷기 / 2줄 돌격 준비 / 3줄 돌진 / 4줄 숨 고르기
+    'shielder': dict(file='shielder_sheet.png', cell=(265, 247), rows=4, char_h=203, foot_y=239, anchor_x=132),
+}
+SHEET_FILES = {k: DP(v['file']) for k, v in SHEET_SPECS.items()}
+SHEET_WHITE = {k: OUT('dg_%s_sheet_white.png' % k) for k in SHEET_SPECS}
+GS_COLS = 6                          # 시트 가로 칸 수 (모든 시트 공통)
+GS_WALK_FPS = 9                      # 사수 걷는 그림이 넘어가는 속도 (초당 칸 수)
+SH_WALK_FPS = 7                      # 방패병 걷는 그림 속도
+SH_PANT_FPS = 8                      # 방패병 숨 고르는 그림 속도
 ENEMY_OUT = {k: OUT('dg_%s.png' % k) for k in ENEMY_SRC}
 ENEMY_WHITE = {k: OUT('dg_%s_white.png' % k) for k in ENEMY_SRC}     # 하얗게 번쩍일 때 쓰는 그림
 
@@ -141,8 +147,9 @@ def prepare_enemy_images():
         sizes[k] = res
         if not fresh(ENEMY_OUT[k], ENEMY_WHITE[k]):
             make_white(ENEMY_OUT[k], ENEMY_WHITE[k])
-    if os.path.exists(GUNNER_SHEET) and not fresh(GUNNER_SHEET, GUNNER_SHEET_WHITE):
-        make_white(GUNNER_SHEET, GUNNER_SHEET_WHITE)
+    for k in SHEET_SPECS:
+        if os.path.exists(SHEET_FILES[k]) and not fresh(SHEET_FILES[k], SHEET_WHITE[k]):
+            make_white(SHEET_FILES[k], SHEET_WHITE[k])
     return sizes
 
 
@@ -273,11 +280,11 @@ def load_assets(sizes):
     for k in list(sizes):
         sz[k + '_white'] = sizes[k]
     A = SimpleNamespace(sizes=sz, imgs=imgs)
-    A.gsheet = A.gsheet_white = None
-    if os.path.exists(GUNNER_SHEET) and os.path.exists(GUNNER_SHEET_WHITE):
-        A.gsheet = load_image(GUNNER_SHEET)
-        A.gsheet_white = load_image(GUNNER_SHEET_WHITE)
-        A.gsheet_h = GS_CELL_H * GS_ROWS
+    A.sheets = {}
+    for k, sp in SHEET_SPECS.items():
+        if os.path.exists(SHEET_FILES[k]) and os.path.exists(SHEET_WHITE[k]):
+            A.sheets[k] = SimpleNamespace(img=load_image(SHEET_FILES[k]), white=load_image(SHEET_WHITE[k]),
+                                          h=sp['cell'][1] * sp['rows'], **sp)
     A.red = load_image(OUT('dg_red.png'))
     A.black = load_image(OUT('dg_black.png'))
     A.violet = load_image(OUT('dg_violet.png'))
@@ -360,6 +367,11 @@ class Enemy:
         self.t = 0.0
         self.age = random.uniform(0, 6)       # 움직임이 서로 어긋나게
         self.push = (0.0, 0.0)                # 맞아서 밀려나는 속도
+        self.cell = (0, 0)                    # 시트를 쓰는 몬스터가 지금 그릴 칸 (줄, 칸)
+
+    def sheet(self):
+        """이 몬스터의 시트가 있으면 True"""
+        return self.kind in self.A.sheets
 
     @property
     def hx(self):
@@ -428,6 +440,20 @@ class Enemy:
     def draw_sprite(self, key, ox, oy, sx=1.0, sy=1.0, alpha=1.0, flip=None, dx=0.0, dy=0.0, at=None, rot=0.0):
         """key 그림을 그린다. sx, sy는 찌그러짐, rot는 기울기(라디안), dy는 위로 띄우는 높이.
         찌그러져도 발 위치는 그대로"""
+        sp = self.A.sheets.get(self.kind)
+        if sp is not None:                                   # 시트: self.cell 칸을 그림. 발 위치는 그대로
+            cw, ch = sp.cell
+            kx = self.dh * sx / sp.char_h
+            ky = self.dh * sy / sp.char_h
+            f = self.flip() if flip is None else flip
+            x, y = (self.x, self.y) if at is None else at
+            row, col = self.cell
+            cx = x + ox + dx + (cw / 2 - sp.anchor_x) * kx * (-1 if f == 'h' else 1)
+            cy = y + oy + dy - self.dh / 2 + (sp.foot_y - ch / 2) * ky
+            im = sp.white if key.endswith('_white') else sp.img
+            im.opacify(max(0.0, min(1.0, alpha)))
+            im.clip_composite_draw(col * cw, sp.h - (row + 1) * ch, cw, ch, rot, f, cx, cy, cw * kx, ch * ky)
+            return
         img = self.A.imgs[key]
         w, h = self.A.sizes[key]
         dh = self.dh * sy
@@ -581,10 +607,6 @@ class Gunner(Enemy):
         self.aim = 0.0
         self.face = -1
         self.turn_t = 0.0
-        self.cell = (0, 0)                # 지금 그릴 시트 칸 (줄, 칸)
-
-    def sheet(self):
-        return self.A.gsheet is not None
 
     def flip(self):
         if self.sheet():                  # 시트 그림은 오른쪽을 보고 있음
@@ -595,23 +617,6 @@ class Gunner(Enemy):
         if self.sheet():
             return self.x + self.face * self.dh * 0.5, self.y - self.dh * 0.17
         return self.x + self.face * self.dw * 0.46, self.y - self.dh * 0.16
-
-    def draw_sprite(self, key, ox, oy, sx=1.0, sy=1.0, alpha=1.0, flip=None, dx=0.0, dy=0.0, at=None, rot=0.0):
-        """시트가 있으면 self.cell 칸을 그리고, 없으면 예전 그림. 찌그러져도 발 위치는 그대로"""
-        if not self.sheet():
-            return super().draw_sprite(key, ox, oy, sx, sy, alpha, flip, dx, dy, at, rot)
-        A = self.A
-        img = A.gsheet_white if key.endswith('_white') else A.gsheet
-        kx = self.dh * sx / GS_CHAR_H
-        ky = self.dh * sy / GS_CHAR_H
-        f = self.flip() if flip is None else flip
-        x, y = (self.x, self.y) if at is None else at
-        row, col = self.cell
-        cx = x + ox + dx + (GS_CELL_W / 2 - GS_ANCHOR_X) * kx * (-1 if f == 'h' else 1)
-        cy = y + oy + dy - self.dh / 2 + (GS_CELL_H / 2 - (GS_CELL_H - GS_FOOT_Y)) * ky
-        img.opacify(max(0.0, min(1.0, alpha)))
-        img.clip_composite_draw(col * GS_CELL_W, A.gsheet_h - (row + 1) * GS_CELL_H, GS_CELL_W, GS_CELL_H,
-                                rot, f, cx, cy, GS_CELL_W * kx, GS_CELL_H * ky)
 
     def update(self, dt, ctx):
         if self.step_dying(dt):
@@ -741,6 +746,8 @@ class Shielder(Enemy):
 
     def flip(self):
         face = -1 if math.cos(self.face_ang) < 0 else 1
+        if self.sheet():                  # 시트 그림은 오른쪽을 보고 있음
+            return 'h' if face == -1 else ''
         return 'h' if (face == 1) == FACES_LEFT['shielder'] else ''
 
     def bullet_result(self, bx, by):
@@ -818,19 +825,31 @@ class Shielder(Enemy):
         key = 'shielder_block' if (self.guard or self.block_t > 0) else 'shielder'
         dx = dy = rot = 0.0
         sx = sy = 1.0
+        sh = self.sheet()
         if self.state == 'windup':
             k = min(1.0, self.t / SHIELDER_WINDUP)
             dx = -math.cos(self.face_ang) * 10 * k + random.uniform(-1.5, 1.5) * k
             dy = -math.sin(self.face_ang) * 10 * k + random.uniform(-1.5, 1.5) * k
+            if sh:                                           # 시트: 준비 줄에서 웅크리는 정도에 맞춰 칸이 넘어감
+                self.cell = (1, min(GS_COLS - 1, int(k * GS_COLS)))
         elif self.state == 'bash':
-            sx, sy = 1.12, 0.94
+            if sh:                                           # 시트: 돌진 줄
+                self.cell = (2, min(GS_COLS - 1, int(self.t / SHIELDER_BASH_TIME * GS_COLS)))
+            else:
+                sx, sy = 1.12, 0.94
         elif self.state == 'recover':
-            sy = 1 - 0.05 * abs(math.sin(self.age * 8))
+            if sh:                                           # 시트: 숨 고르기 줄이 반복됨
+                self.cell = (3, int(self.age * SH_PANT_FPS) % GS_COLS)
+            else:
+                sy = 1 - 0.05 * abs(math.sin(self.age * 8))
         else:                                                # 걸을 때: 묵직하게 좌우로 흔들림
-            s = math.sin(self.age * 6 * self.rate)
-            dy = abs(s) * 2.5
-            rot = 0.045 * s
-            sy = 1 + 0.025 * math.sin(self.age * 12)
+            if sh:
+                self.cell = (0, int(self.age * SH_WALK_FPS * self.rate) % GS_COLS)
+            else:
+                s = math.sin(self.age * 6 * self.rate)
+                dy = abs(s) * 2.5
+                rot = 0.045 * s
+                sy = 1 + 0.025 * math.sin(self.age * 12)
         if self.block_t > 0:                                 # 막았을 때: 떨리고 하얗게 번쩍임
             f = self.block_t / 0.35
             dx += random.uniform(-2, 2) * f
